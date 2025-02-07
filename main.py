@@ -1,3 +1,4 @@
+import sys
 import json
 import re
 import time
@@ -7,6 +8,7 @@ import platform
 from datetime import datetime
 import subprocess
 import traceback
+import argparse
 
 import requests
 from pynput import keyboard
@@ -17,6 +19,11 @@ import config
 
 logging.basicConfig(level=logging.INFO)
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--host", help="Host IP to which the stats to be sent")
+parser.add_argument("--interval", help="Interval to let the system know how frequent the stats has to be sent / persisted")
+parser.add_argument("--idletime", help="Threshold to calculate the idle time")
 
 class BrowserLogger:
     def __init__(self, unproductive_urls):
@@ -164,14 +171,15 @@ class KeyboardLogger:
 
 
 class ProductivityTracker:
-    def __init__(self, log_interval=300): # 5 mins once we log
+    def __init__(self, host="127.0.0.1", log_interval=300, idletime=300): # 5 mins once we log
+        self.host = host
         self._loaded = False
         self.log_interval = log_interval
         self.uuid = self.get_system_uuid()
         self.unproductive_urls = ["facebook.com", "youtube.com", "instagram.com", "reddit.com"]
         self.browser_logger = BrowserLogger(self.unproductive_urls)
         self.application_logger = ApplicationLogger()
-        self.idle_logger = IdleTimeLogger(idle_threshold=120) # 5 mins is the threshold for inactive time
+        self.idle_logger = IdleTimeLogger(idle_threshold=idletime) # 2 mins is the threshold for inactive time
         self.keyboard_logger = KeyboardLogger(self.application_logger)
         self.load_logs()
         self.threads = []
@@ -223,7 +231,8 @@ class ProductivityTracker:
             raise ex
     
     def verify_change_in_user_on_this_system_uuid(self):
-        response = requests.get(config.keylogger_service_url + config.verify_uuid_change.format(uuid=self.uuid))
+        url = config.keylogger_service_url.format(HOST=self.host)
+        response = requests.get(url + config.verify_uuid_change.format(uuid=self.uuid))
         if response.status_code != 200:
             self.reset_logs()
         elif response.status_code == 200:
@@ -238,7 +247,8 @@ class ProductivityTracker:
             json.dump(self.logs, f)
 
     def send_metrics(self, payload):
-        response = requests.post(config.keylogger_service_url, json=payload, headers=self.headers)
+        url = config.keylogger_service_url.format(HOST=self.host)
+        response = requests.post(url, json=payload, headers=self.headers)
         print("Response persisting in server", response.content)
 
     def save_logs(self):
@@ -370,5 +380,12 @@ class ProductivityTracker:
 
 
 if __name__ == "__main__":
-    tracker = ProductivityTracker(log_interval=300)
+    args = parser.parse_args()
+    host = args.host
+    interval = args.interval
+    idletime = args.idletime
+    if not host:
+        sys.exit("Host IP is required")
+    print(f"Option provided are\nHost : {host}\nInterval : {interval}\nIdle Time: {idletime}")
+    tracker = ProductivityTracker(host=host, log_interval=interval or 300,idletime=idletime or 120)
     tracker.run()
